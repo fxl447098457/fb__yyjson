@@ -1,4 +1,3 @@
-
 #include once "yyjson.bi"
 #ifndef __fb_64bit__
 #libpath "win32"

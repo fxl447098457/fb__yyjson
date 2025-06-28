@@ -524,7 +524,8 @@ declare function yyjson_doc_ptr_get(byval doc as yyjson_doc ptr, byval ptr_ as c
 declare function yyjson_doc_ptr_getn(byval doc as yyjson_doc ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger) as yyjson_val ptr
 declare function yyjson_doc_ptr_getx(byval doc as yyjson_doc ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger, byval err_ as yyjson_ptr_err ptr) as yyjson_val ptr
 declare function yyjson_ptr_get(byval val_ as yyjson_val ptr, byval ptr_ as const zstring ptr) as yyjson_val ptr
-declare function yyjson_ptr_getn(byval val_ as yyjson_val ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger) as yyjson_val ptr
+'declare function yyjson_ptr_getn(byval val_ as yyjson_val ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger) as yyjson_val ptr
+#define yyjson_ptr_getn(val_, ptr_, len_) cptr(yyjson_val ptr, yyjson_ptr_getx((val_), (ptr_), (len_), NULL))
 declare function yyjson_ptr_getx(byval val_ as yyjson_val ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger, byval err_ as yyjson_ptr_err ptr) as yyjson_val ptr
 declare function yyjson_mut_doc_ptr_get(byval doc as yyjson_mut_doc ptr, byval ptr_ as const zstring ptr) as yyjson_mut_val ptr
 declare function yyjson_mut_doc_ptr_getn(byval doc as yyjson_mut_doc ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger) as yyjson_mut_val ptr
@@ -1421,13 +1422,6 @@ private function yyjson_obj_getn(byval obj as yyjson_val ptr, byval _key as cons
          key = unsafe_yyjson_get_next(key + 1)
       Wend
 
-      While len_ > 0
-    len_ -= 1
-    If unsafe_yyjson_equals_strn(key, _key, key_len) Then
-        Return key + 1
-    End If
-    key = unsafe_yyjson_get_next(key + 1)
-Wend
    end if
    return NULL
 end function
@@ -1483,6 +1477,24 @@ private function yyjson_obj_iter_getn(byval iter as yyjson_obj_iter ptr, byval k
          idx = 0
          cur = unsafe_yyjson_get_first(iter->obj)
       end if
+      While idx < max
+      idx += 1
+     dim as yyjson_val  ptr next_ = unsafe_yyjson_get_next(cur + 1)
+    
+    If unsafe_yyjson_equals_strn(cur, key, key_len) Then
+        iter->idx = idx
+        iter->cur = next_
+        Return cur + 1
+    End If
+    
+    cur = next_
+    
+    If idx = iter->max AndAlso iter->idx < iter->max Then
+        idx = 0
+        max = iter->idx
+        cur= unsafe_yyjson_get_first(iter->obj)
+    End If
+Wend
       '' TODO: while (idx++ < max) { yyjson_val *next = unsafe_yyjson_get_next(cur + 1); if (unsafe_yyjson_equals_strn(cur, key, key_len)) { iter->idx = idx; iter->cur = next; return cur + 1; } cur = next; if (idx == iter->max && iter->idx < iter->max) { idx = 0; max = iter->idx; cur = unsafe_yyjson_get_first(iter->obj); } }
    end if
    return NULL
@@ -3220,7 +3232,8 @@ private function yyjson_mut_obj_put(byval obj as yyjson_mut_val ptr, byval key a
    end if
    key_len = unsafe_yyjson_get_len(key)
    yyjson_mut_obj_iter_init(obj, @iter)
-   While (cur_key = yyjson_mut_obj_iter_next(@iter)) <> NULL
+    cur_key = yyjson_mut_obj_iter_next(@iter)
+   While (cur_key <> NULL)
     If unsafe_yyjson_equals_strn(cur_key, key->uni.str_, key_len) Then
         If (Not replaced) AndAlso (val_ <> NULL) Then
             replaced = True
@@ -3230,6 +3243,7 @@ private function yyjson_mut_obj_put(byval obj as yyjson_mut_val ptr, byval key a
             yyjson_mut_obj_iter_remove(@iter)
         End If
     End If
+    cur_key = yyjson_mut_obj_iter_next(@iter)
 Wend
    
    '' TODO: while ((cur_key = yyjson_mut_obj_iter_next(&iter)) != 0) { if (unsafe_yyjson_equals_strn(cur_key, key->uni.str, key_len)) { if (!replaced && val) { replaced = true; val->next = cur_key->next->next; cur_key->next = val; } else { yyjson_mut_obj_iter_remove(&iter); } } }
@@ -3685,6 +3699,16 @@ private function yyjson_mut_obj_remove_strn(byval obj as yyjson_mut_val ptr, byv
       dim iter as yyjson_mut_obj_iter
       dim val_removed as yyjson_mut_val ptr = NULL
       yyjson_mut_obj_iter_init(obj, @iter)
+      key = yyjson_mut_obj_iter_next(@iter)
+      while key <> null
+    If unsafe_yyjson_equals_strn(key, _key, _len) Then
+        If val_removed = null Then
+            val_removed = key->next_
+        End If
+        yyjson_mut_obj_iter_remove(@iter)
+    End If
+    key = yyjson_mut_obj_iter_next(@iter)
+Wend
       '' TODO: while ((key = yyjson_mut_obj_iter_next(&iter)) != NULL) { if (unsafe_yyjson_equals_strn(key, _key, _len)) { if (!val_removed) val_removed = key->next; yyjson_mut_obj_iter_remove(&iter); } }
       return val_removed
    end if
@@ -3706,6 +3730,20 @@ private function yyjson_mut_obj_rename_keyn(byval doc as yyjson_mut_doc ptr, byv
       return false
    end if
    yyjson_mut_obj_iter_init(obj, @iter)
+   old_key = yyjson_mut_obj_iter_next(@iter)
+
+While old_key <> NULL
+    If unsafe_yyjson_equals_strn(cast(any ptr,old_key), key, len_) Then
+        If cpy_key = null Then
+            cpy_key = unsafe_yyjson_mut_strncpy(doc, new_key, new_len)
+            If cpy_key = null Then
+                Return False
+            End If
+        End If
+        yyjson_mut_set_strn(old_key, cpy_key, new_len)
+    End If
+    old_key = yyjson_mut_obj_iter_next(@iter)
+Wend
    '' TODO: while ((old_key = yyjson_mut_obj_iter_next(&iter))) { if (unsafe_yyjson_equals_strn((void *)old_key, key, len)) { if (!cpy_key) { cpy_key = unsafe_yyjson_mut_strncpy(doc, new_key, new_len); if (!cpy_key) return false; } yyjson_mut_set_strn(old_key, cpy_key, new_len); } }
    return -(cpy_key <> NULL)
 end function
@@ -3732,7 +3770,6 @@ private function yyjson_doc_ptr_get(byval doc as yyjson_doc ptr, byval ptr_ as c
    return yyjson_doc_ptr_getn(doc, ptr_, strlen(ptr_))
 end function
 
-'#define yyjson_doc_ptr_getn(doc, ptr_, len_) cptr(yyjson_val ptr, yyjson_doc_ptr_getx((doc), (ptr_), (len_), NULL))
 
 private function yyjson_doc_ptr_getx(byval doc as yyjson_doc ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger, byval err_ as yyjson_ptr_err ptr) as yyjson_val ptr
    do
@@ -3784,8 +3821,6 @@ private function yyjson_ptr_get(byval val_ as yyjson_val ptr, byval ptr_ as cons
    end if
    return yyjson_ptr_getn(val_, ptr_, strlen(ptr_))
 end function
-
-'#define yyjson_ptr_getn(val_, ptr_, len_) cptr(yyjson_val ptr, yyjson_ptr_getx((val_), (ptr_), (len_), NULL))
 
 private function yyjson_ptr_getx(byval val_ as yyjson_val ptr, byval ptr_ as const zstring ptr, byval len_ as uinteger, byval err_ as yyjson_ptr_err ptr) as yyjson_val ptr
    do
